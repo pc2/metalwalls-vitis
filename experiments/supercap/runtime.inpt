@@ -1,0 +1,83 @@
+# Check run
+# =========
+# Im41/PF6 (J. Phys. Chem. B,114,12629-12631,2010)
+# + Carbon walls (Surf. Sci.,124,547-554,1983)
+
+# Global parameters
+num_steps     1
+timestep      82.682
+temperature   400
+num_pbc       2
+
+# Box
+# ---
+box
+  length 60.9312989852082  64.9452838020448 232.893000000000
+
+# Species definition
+# ---------------
+
+species
+
+  species_type
+    name        A
+    count     320
+    charge  point -0.78
+    mass   144.96
+
+  species_type
+    name Im1
+    count 320
+    charge point 0.4374
+    mass 67.07
+
+  species_type
+    name Im2
+    count 320
+    charge point 0.1578
+    mass 15.04
+
+  species_type
+    name Im3
+    count 320
+    charge point 0.1848
+    mass 57.12
+
+  species_type
+    name C1
+    count 1248
+    charge gaussian 0.955234657 0.0
+    mass 12.0
+    mobile False
+
+  species_type
+    name C2
+    count 1248
+    charge gaussian 0.955234657 0.0
+    mass 12.0
+    mobile False
+
+electrodes
+
+  electrode_type
+    name C1
+    species C1
+    potential +0.000
+
+  electrode_type
+    name C2
+    species C2
+    potential +0.000
+
+  electrode_charges cg 1.0e-12 200
+  force_neutral false
+
+interactions
+  coulomb
+    coulomb_rtol       1.0e-15  # changed from 1.0e-6 to this value to get back our reference result
+    coulomb_rcut       30.45
+    coulomb_ktol       1.0e-15  # changed from 1.0e-6 to this value to get back our reference result
+
+output
+  default 0
+  charges 1

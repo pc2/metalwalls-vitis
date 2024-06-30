@@ -1,0 +1,36 @@
+# Output directories
+_x*
+.Xil
+.ipcache
+.run
+build
+.venv
+.ipcache
+
+# Intermediate Artifacts
+*.out
+*.log
+*.run_summary
+*.csv
+vitis_analyzer*
+*.txt
+*.tar.gz
+*.zip
+*.xml
+*.png
+*.pdf
+release.md
+*.json
+*.vtu
+*.pdf
+Manifest.toml
+
+# Additional directories
+strict_*
+data
+
+# Slurm stuff
+*.out
+
+# Don't ignore python requirements
+!requirements.txt
