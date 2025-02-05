@@ -93,8 +93,20 @@ build/sr_acc_$(TARGET).xclbin: $(SR_KERNELS) $(SR_CONFIG) Makefile
 .PHONY: sr_acc
 sr_acc: build/sr_acc_$(TARGET).xclbin
 
-ALL_KERNELS = $(K0_KERNELS) $(LR_KERNELS) $(SR_KERNELS) 
-ALL_ACCELERATORS = build/k0_acc_$(TARGET).xclbin build/lr_acc_$(TARGET).xclbin build/sr_acc_$(TARGET).xclbin
+CG_KERNELS = build/cg_acc/kernel_cg_$(TARGET).xo
+CG_CONFIG = src/cg_acc/link.cfg
+
+build/cg_acc/%_$(TARGET).xo: src/cg_acc/%.cpp Makefile
+	$(VPP) -c $(VPP_FLAGS) -k $* -o $@ '$<'
+
+build/cg_acc_$(TARGET).xclbin: $(CG_KERNELS) $(CG_CONFIG) Makefile
+	$(VPP) -l $(VPP_FLAGS) --config $(CG_CONFIG) -o $@ $(CG_KERNELS)
+
+.PHONY: cg_acc
+cg_acc: build/cg_acc_$(TARGET).xclbin
+
+ALL_KERNELS = $(K0_KERNELS) $(LR_KERNELS) $(SR_KERNELS) $(CG_KERNELS)
+ALL_ACCELERATORS = build/k0_acc_$(TARGET).xclbin build/lr_acc_$(TARGET).xclbin build/sr_acc_$(TARGET).xclbin build/cg_acc_$(TARGET).xclbin
 
 .PHONY: reports
 reports: $(ALL_KERNELS)
