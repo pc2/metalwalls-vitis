@@ -44,6 +44,12 @@ ifndef $(TARGET)
 TARGET = hw
 endif
 
+AURORA_KERNELS = AuroraFlow/aurora_flow_0.xo AuroraFlow/aurora_flow_1.xo
+
+.PHONY: aurora
+aurora:
+	$(MAKE) -C AuroraFlow
+
 VPP = v++
 VPP_FLAGS = --target $(TARGET) --platform $(PLATFORM) --save-temps --temp_dir build/.vpptemp
 ifeq ($(TARGET),$(filter $(TARGET),sw_emu hw_emu))
