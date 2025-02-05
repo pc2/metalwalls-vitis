@@ -1,0 +1,196 @@
+# ================
+# Meta & Templates
+# ================
+
+stages:
+    - precheck
+    - synthesis
+    - execution
+    - release
+
+variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    MW_TARGET: hw # Can be changed to sw_emu quickly to test the pipeline with software emulation
+
+default:
+    id_tokens:
+      CI_JOB_JWT:
+        aud: https://git.uni-paderborn.de
+    tags:
+      - slurm
+    before_script:
+        - source ./env.sh
+
+.cheap_job:
+    rules:
+        - if: $CI_PIPELINE_SOURCE == 'merge_request_event' # Run for all merge-requests (even drafts)
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Run on the main branch
+
+.expensive_job:
+    rules:
+        - if: $CI_PIPELINE_SOURCE == 'merge_request_event' && $CI_MERGE_REQUEST_TITLE !~ /^Draft:/ # Run for non-draft merge requests
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Run on the main branch
+
+.accelerator_precheck:
+    extends: .cheap_job
+    stage: precheck
+    tags:
+        - noctua2
+    variables:
+        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 2 -t 04:30:00"
+    script:
+        - 'make ${MW_ACCELERATOR} TARGET=sw_emu # Build accelerator image for software emulation'
+        - 'make run_test TARGET=sw_emu TEST_PARAMS="[${MW_ACCELERATOR}]~[!benchmark]~[dist]" -j2 # Run the unit tests for software emulation'
+
+.synthesis:
+    extends: .expensive_job
+    stage: synthesis
+    tags:
+        - noctua2
+    variables:
+        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -q fpgasynthesis -c 16 -t 24:00:00 --mem 64G"
+    script:
+        - "make ${MW_ACCELERATOR} TARGET=${MW_TARGET}"
+        - "archive_summary -ksx build/${MW_ACCELERATOR}_${MW_TARGET}.xclbin.link_summary"
+    artifacts:
+        paths:
+            - build/*.xclbin
+            - build/*.link_summary.archive
+        when: always
+
+.acc_test:
+    extends: .expensive_job
+    stage: execution
+    tags:
+        - noctua2
+    variables:
+        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p fpga --constraint=xilinx_u280_xrt2.15 -t 00:30:00"
+    script:
+        - make run_test -j8 TARGET=${MW_TARGET} TEST_PARAMS="-r XML -o ${MW_ACCELERATOR}_test.xml [${MW_ACCELERATOR}]"
+    artifacts:
+        paths:
+            - "*.xml"
+        when: always
+
+# =========
+# Prechecks
+# =========
+
+general precheck:
+    extends: .cheap_job
+    stage: precheck
+    tags:
+        - noctua2
+    variables:
+        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 16 -t 01:00:00"
+    script:
+        - './scripts/format_code.sh # Run the formatting script'
+        - 'test -z "$(git ls-files -m)" # Check that the formatting script did not change the code.'
+        - 'make run_test TARGET=sw_emu TEST_PARAMS="~[k0_acc]~[sr_acc]~[lr_acc]" -j16 # Run the unit tests for software emulation'
+
+# ==============
+# K0 Accelerator
+# ==============
+
+precheck k0_acc:
+    extends: .accelerator_precheck
+    variables:
+        MW_ACCELERATOR: k0_acc
+
+synthesize k0_acc:
+    extends: .synthesis
+    variables:
+        MW_ACCELERATOR: k0_acc
+
+test k0_acc:
+    extends: .acc_test
+    needs:
+        - "synthesize k0_acc"
+    variables:
+        MW_ACCELERATOR: k0_acc
+
+# ==============
+# SR Accelerator
+# ==============
+
+precheck sr_acc:
+    extends: .accelerator_precheck
+    variables:
+        MW_ACCELERATOR: sr_acc
+
+synthesize sr_acc:
+    extends: .synthesis
+    variables:
+        MW_ACCELERATOR: sr_acc
+
+test sr_acc:
+    extends: .acc_test
+    needs:
+        - "synthesize sr_acc"
+    variables:
+        MW_ACCELERATOR: sr_acc
+
+# ==============
+# LR Accelerator
+# ==============
+
+precheck lr_acc:
+    extends: .accelerator_precheck
+    variables:
+        MW_ACCELERATOR: lr_acc
+        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 2 --mem 64G -t 04:30:00"
+
+synthesize lr_acc:
+    extends: .synthesis
+    variables:
+        MW_ACCELERATOR: lr_acc
+
+test lr_acc:
+    extends: .acc_test
+    needs:
+        - "synthesize lr_acc"
+    variables:
+        MW_ACCELERATOR: lr_acc
+
+# =======
+# Miniapp
+# =======
+
+miniapp:
+    extends: .expensive_job
+    stage: execution
+    tags:
+        - noctua2
+    variables:
+        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p fpga --constraint xilinx_u280_xrt2.15 -n 15 -N 5 -t 00:15:00 -x n2fpga02"
+    needs:
+        - "synthesize k0_acc"
+        - "synthesize lr_acc"
+        - "synthesize sr_acc"
+    script:
+        - "./scripts/run_miniapp.sh"
+    artifacts:
+        paths:
+            - "metrics_*.json"
+            - "charges_*.out"
+        when: always
+
+# =======
+# Release
+# =======
+
+release:
+    rules:
+        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Only deploy the binaries on the main branch
+    stage: release
+    tags:
+        - noctua2
+    variables:
+        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 1 -t 00:10:00"
+        TAG_NAME: cibuild-${CI_PIPELINE_IID}
+        PACKAGE_URL: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/metalwalls_vitis_u280/${TAG_NAME}/accelerators.tar.gz
+    script:
+        - tar -caf accelerators.tar.gz build/*.xclbin build/*.link_summary.archive
+        - 'curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file accelerators.tar.gz ${PACKAGE_URL}'
+        - './scripts/make_release_text.py > release.md'
+        - 'ml tools release-cli && release-cli create --name "Build ${CI_PIPELINE_IID}" --description release.md --tag-name ${TAG_NAME}'
