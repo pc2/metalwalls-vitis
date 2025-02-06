@@ -82,8 +82,7 @@ extern "C"
 {
     void kernel_cg(const int num_atoms, const int iter, const double selfPotFactor, const double rsold,
                    const double *b_cg, const double *q_in, const double *res_in, const double *x_cg_in,
-                   double *x_cg_out,
-                   double *q_out, double *res_out, double *rsnew, double *Ap)
+                   double *x_cg_out, double *q_out, double *res_out, double *rsnew, double *Ap)
     {
 #pragma HLS INTERFACE m_axi port = b_cg offset = slave bundle = gmem1
 #pragma HLS INTERFACE m_axi port = q_in offset = slave bundle = gmem2
@@ -126,45 +125,45 @@ extern "C"
         double res_out_loc[num_max];
         double x_cg_out_loc[num_max];
 
-        selfPot:
-            daxpy(Ap_loc, num_atoms, Ap_loc, -selfPotFactor, q_in_loc);
+    selfPot:
+        daxpy(Ap_loc, num_atoms, Ap_loc, -selfPotFactor, q_in_loc);
 
-            if (iter == 0)
+        if (iter == 0)
+        {
+            // Setup initial residual
+            for (int i = 0; i < num_atoms; i += uf)
             {
-                // Setup initial residual
-                for (int i = 0; i < num_atoms; i += uf)
-                {
 #pragma HLS loop_tripcount min = c_n / uf max = c_n / uf
 #pragma HLS pipeline II = 1
-                    for (int ii = 0; ii < uf; ii++)
-                    {
+                for (int ii = 0; ii < uf; ii++)
+                {
 #pragma HLS unroll
-                        res_out_loc[i + ii] = b_cg_loc[i + ii] - Ap_loc[i + ii];
-                        q_out_loc[i + ii] = res_out_loc[i + ii];
-                    }
+                    res_out_loc[i + ii] = b_cg_loc[i + ii] - Ap_loc[i + ii];
+                    q_out_loc[i + ii] = res_out_loc[i + ii];
                 }
-
-                vdot(num_atoms, res_out_loc, res_out_loc, rsnew_loc);
             }
-            else
-            {
-                double pAp;
-                vdot(num_atoms, q_in_loc, Ap_loc, pAp);
 
-                double alpha_cg = rsold_loc / pAp;
+            vdot(num_atoms, res_out_loc, res_out_loc, rsnew_loc);
+        }
+        else
+        {
+            double pAp;
+            vdot(num_atoms, q_in_loc, Ap_loc, pAp);
 
-                daxpy(x_cg_out_loc, num_atoms, x_cg_in_loc, alpha_cg, q_in_loc);
+            double alpha_cg = rsold_loc / pAp;
 
-                daxpy(res_out_loc, num_atoms, res_in_loc, -alpha_cg, Ap_loc);
+            daxpy(x_cg_out_loc, num_atoms, x_cg_in_loc, alpha_cg, q_in_loc);
 
-                vdot(num_atoms, res_out_loc, res_out_loc, rsnew_loc);
+            daxpy(res_out_loc, num_atoms, res_in_loc, -alpha_cg, Ap_loc);
 
-                /// Setup for next iteration
-                double beta = rsnew_loc / rsold_loc;
+            vdot(num_atoms, res_out_loc, res_out_loc, rsnew_loc);
 
-                daxpy(q_out_loc, num_atoms, res_out_loc, beta, q_in_loc);
-            }
-   write:
+            /// Setup for next iteration
+            double beta = rsnew_loc / rsold_loc;
+
+            daxpy(q_out_loc, num_atoms, res_out_loc, beta, q_in_loc);
+        }
+    write:
         for (int i = 0; i < num_atoms; i += uf_io)
         {
 #pragma HLS loop_tripcount min = c_n / uf_io max = c_n / uf_io
