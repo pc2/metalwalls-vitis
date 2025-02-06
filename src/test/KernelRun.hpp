@@ -133,7 +133,6 @@ class KernelRuns
         char basepath_arr[1024];
         snprintf(basepath_arr, 1024, "%s/%s/%s/%s/", ROOT_DATA_DIR, experiment_name.c_str(), mode.c_str(),
                  name.c_str());
-        std::filesystem::create_directories(basepath_arr);
 
         char path_arr[1033];
         snprintf(path_arr, 1033, "%s/data.csv", basepath_arr);
