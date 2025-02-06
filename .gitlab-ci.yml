@@ -11,6 +11,7 @@ stages:
 variables:
     GIT_SUBMODULE_STRATEGY: recursive
     MW_TARGET: sw_emu # Can be changed to sw_emu quickly to test the pipeline with software emulation
+    ACCOUNT: "hpc-prf-cifi"
 
 default:
     id_tokens:
@@ -24,7 +25,7 @@ default:
 .accelerator_precheck:
     stage: precheck
     variables:
-        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 2 -t 04:30:00"
+        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -c 2 -t 04:30:00"
     script:
         - 'make ${MW_ACCELERATOR} TARGET=sw_emu # Build accelerator image for software emulation'
         - 'make run_test TARGET=sw_emu TEST_PARAMS="[${MW_ACCELERATOR}]~[!benchmark]~[dist]" -j2 # Run the unit tests for software emulation'
@@ -34,7 +35,7 @@ default:
     only:
         - web
     variables:
-        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -q fpgasynthesis -c 16 -t 24:00:00 --mem 64G"
+        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -q fpgasynthesis -c 16 -t 24:00:00 --mem 64G"
     script:
         - "make ${MW_ACCELERATOR} TARGET=${MW_TARGET}"
         - "archive_summary -ksx build/${MW_ACCELERATOR}_${MW_TARGET}.xclbin.link_summary"
@@ -49,7 +50,7 @@ default:
     only:
         - web
     variables:
-        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p fpga --constraint=xilinx_u280_xrt2.15 -t 00:30:00"
+        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p fpga --constraint=xilinx_u280_xrt2.15 -t 00:30:00"
     script:
         - make run_test -j8 TARGET=${MW_TARGET} TEST_PARAMS="-r XML -o ${MW_ACCELERATOR}_test.xml [${MW_ACCELERATOR}]"
     artifacts:
@@ -64,7 +65,7 @@ default:
 general precheck:
     stage: precheck
     variables:
-        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 16 -t 01:00:00"
+        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -c 16 -t 01:00:00"
     script:
         - './scripts/format_code.sh # Run the formatting script'
         - 'test -z "$(git ls-files -m)" # Check that the formatting script did not change the code.'
@@ -120,7 +121,7 @@ precheck lr_acc:
     extends: .accelerator_precheck
     variables:
         MW_ACCELERATOR: lr_acc
-        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 2 --mem 64G -t 04:30:00"
+        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -c 2 --mem 64G -t 04:30:00"
 
 synthesize lr_acc:
     extends: .synthesis
@@ -141,7 +142,7 @@ test lr_acc:
 miniapp:
     stage: execution
     variables:
-        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p fpga --constraint xilinx_u280_xrt2.15 -n 15 -N 5 -t 00:15:00 -x n2fpga02"
+        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p fpga --constraint xilinx_u280_xrt2.15 -n 15 -N 5 -t 00:15:00 -x n2fpga02"
     needs:
         - "synthesize k0_acc"
         - "synthesize lr_acc"
