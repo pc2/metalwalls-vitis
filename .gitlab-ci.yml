@@ -10,7 +10,7 @@ stages:
 
 variables:
     GIT_SUBMODULE_STRATEGY: recursive
-    MW_TARGET: hw # Can be changed to sw_emu quickly to test the pipeline with software emulation
+    MW_TARGET: sw_emu # Can be changed to sw_emu quickly to test the pipeline with software emulation
 
 default:
     id_tokens:
@@ -21,21 +21,8 @@ default:
     before_script:
         - source ./env.sh
 
-.cheap_job:
-    rules:
-        - if: $CI_PIPELINE_SOURCE == 'merge_request_event' # Run for all merge-requests (even drafts)
-        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Run on the main branch
-
-.expensive_job:
-    rules:
-        - if: $CI_PIPELINE_SOURCE == 'merge_request_event' && $CI_MERGE_REQUEST_TITLE !~ /^Draft:/ # Run for non-draft merge requests
-        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Run on the main branch
-
 .accelerator_precheck:
-    extends: .cheap_job
     stage: precheck
-    tags:
-        - noctua2
     variables:
         SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 2 -t 04:30:00"
     script:
@@ -43,10 +30,9 @@ default:
         - 'make run_test TARGET=sw_emu TEST_PARAMS="[${MW_ACCELERATOR}]~[!benchmark]~[dist]" -j2 # Run the unit tests for software emulation'
 
 .synthesis:
-    extends: .expensive_job
     stage: synthesis
-    tags:
-        - noctua2
+    only:
+        - web
     variables:
         SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -q fpgasynthesis -c 16 -t 24:00:00 --mem 64G"
     script:
@@ -59,10 +45,9 @@ default:
         when: always
 
 .acc_test:
-    extends: .expensive_job
     stage: execution
-    tags:
-        - noctua2
+    only:
+        - web
     variables:
         SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p fpga --constraint=xilinx_u280_xrt2.15 -t 00:30:00"
     script:
@@ -77,10 +62,7 @@ default:
 # =========
 
 general precheck:
-    extends: .cheap_job
     stage: precheck
-    tags:
-        - noctua2
     variables:
         SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 16 -t 01:00:00"
     script:
@@ -157,10 +139,7 @@ test lr_acc:
 # =======
 
 miniapp:
-    extends: .expensive_job
     stage: execution
-    tags:
-        - noctua2
     variables:
         SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p fpga --constraint xilinx_u280_xrt2.15 -n 15 -N 5 -t 00:15:00 -x n2fpga02"
     needs:
@@ -174,23 +153,3 @@ miniapp:
             - "metrics_*.json"
             - "charges_*.out"
         when: always
-
-# =======
-# Release
-# =======
-
-release:
-    rules:
-        - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Only deploy the binaries on the main branch
-    stage: release
-    tags:
-        - noctua2
-    variables:
-        SCHEDULER_PARAMETERS: "-A hpc-lco-kenter -p normal -c 1 -t 00:10:00"
-        TAG_NAME: cibuild-${CI_PIPELINE_IID}
-        PACKAGE_URL: ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/metalwalls_vitis_u280/${TAG_NAME}/accelerators.tar.gz
-    script:
-        - tar -caf accelerators.tar.gz build/*.xclbin build/*.link_summary.archive
-        - 'curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file accelerators.tar.gz ${PACKAGE_URL}'
-        - './scripts/make_release_text.py > release.md'
-        - 'ml tools release-cli && release-cli create --name "Build ${CI_PIPELINE_IID}" --description release.md --tag-name ${TAG_NAME}'
