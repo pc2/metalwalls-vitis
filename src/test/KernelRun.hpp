@@ -27,6 +27,7 @@
 #include <fstream>
 
 #define ROOT_EXPERIMENT_DIR "experiments"
+#define ROOT_DATA_DIR "/scratch/hpc-lco-kenter/papeg/mw/data/"
 
 /**
  * @brief Reads an integer before a comma from a stringstream
@@ -130,7 +131,7 @@ class KernelRuns
         : experiment(experiment), experiment_name(experiment_name), name(name), mode(mode), num(experiment.num)
     {
         char basepath_arr[1024];
-        snprintf(basepath_arr, 1024, "%s/%s/%s/%s/", ROOT_EXPERIMENT_DIR, experiment_name.c_str(), mode.c_str(),
+        snprintf(basepath_arr, 1024, "%s/%s/%s/%s/", ROOT_DATA_DIR, experiment_name.c_str(), mode.c_str(),
                  name.c_str());
         std::filesystem::create_directories(basepath_arr);
 
