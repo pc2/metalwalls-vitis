@@ -1,3 +1,3 @@
 [submodule "AuroraFlow"]
 	path = AuroraFlow
-	url = git@github.com:pc2/AuroraFlow
+	url = https://github.com/pc2/AuroraFlow
