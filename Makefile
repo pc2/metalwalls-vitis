@@ -3,8 +3,8 @@
 # ===============
 
 CXX = mpic++
-CXXFLAGS = -Wall -O3 --std=c++17 -I$(XILINX_XRT)/include -Isrc/ -pthread -fopenmp -I/opt/software/pc2/EB-SW/software/VTK/9.2.2-foss-2022a/include/vtk-9.2
-VTK_LIBS = -lvtkCommonCore-9.2 -lvtkCommonDataModel-9.2 -lvtkIOXML-9.2 -lvtksys-9.2
+CXXFLAGS = -Wall -O3 --std=c++17 -I$(XILINX_XRT)/include -Isrc/ -pthread -fopenmp -I/opt/software/pc2/EB-SW/software/VTK/9.3.0-foss-2023b/include/vtk-9.3
+VTK_LIBS = -lvtkCommonCore-9.3 -lvtkCommonDataModel-9.3 -lvtkIOXML-9.3 -lvtksys-9.3
 LDFLAGS = -Wall -O3 --std=c++17 -L$(XILINX_XRT)/lib -lOpenCL -pthread -fopenmp $(VTK_LIBS)
 
 COMMON_OBJECTS = build/host/xcl2.o build/host/ComputeUnit.o build/host/Accelerator.o build/host/Experiment.o
