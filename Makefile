@@ -15,8 +15,8 @@ HOST_OBJECTS = $(COMMON_OBJECTS) build/host/Visualisation.o build/host/main.o
 HOST_HEADERS = $(COMMON_HEADERS) src/host/Visualisation.hpp src/host/json.hpp
 
 TEST_EXE = build/unit_tests
-TEST_OBJECTS = $(COMMON_OBJECTS) build/test/catch_amalgamated.o build/test/cpu_reference.o build/test/test_k0_acc.o build/test/test_lr_acc.o build/test/test_sr_acc.o build/test/test_data.o build/test/test_distribution_algorithm.o
-TEST_HEADERS = $(COMMON_HEADERS) src/test/catch_amalgamated.hpp src/test/KernelRun.hpp
+TEST_OBJECTS = $(COMMON_OBJECTS) build/test/catch_amalgamated.o build/test/cpu_reference.o build/test/test_distribution_algorithm.o
+TEST_HEADERS = $(COMMON_HEADERS) src/test/catch_amalgamated.hpp
 
 build/host/%.o: src/host/%.cpp $(HOST_HEADERS) Makefile
 	mkdir -p build/host/ && $(CXX) $(CXXFLAGS) -c -o $@ $<

@@ -3,32 +3,48 @@
 # ================
 
 stages:
-    - precheck
-    - synthesis
-    - execution
-    - release
+  - format
+  - build
+  - test
+  - synthesis
+  - run
 
 variables:
-    GIT_SUBMODULE_STRATEGY: recursive
-    MW_TARGET: sw_emu # Can be changed to sw_emu quickly to test the pipeline with software emulation
-    ACCOUNT: "hpc-prf-cifi"
+  TARGET: "hw" # Can be changed to sw_emu quickly to test the pipeline with software emulation
+  ACCOUNT: "hpc-prf-cifi"
+  MW_BINARY_DIR: "./build/"
 
 default:
-    id_tokens:
-      CI_JOB_JWT:
-        aud: https://git.uni-paderborn.de
-    tags:
-      - slurm
-    before_script:
-        - source ./env.sh
+  id_tokens:
+    CI_JOB_JWT:
+      aud: https://git.uni-paderborn.de
+  tags:
+    - slurm
+  before_script:
+      - source ./env.sh
 
-.accelerator_precheck:
-    stage: precheck
-    variables:
-        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -c 2 -t 04:30:00"
-    script:
-        - 'make ${MW_ACCELERATOR} TARGET=sw_emu # Build accelerator image for software emulation'
-        - 'make run_test TARGET=sw_emu TEST_PARAMS="[${MW_ACCELERATOR}]~[!benchmark]~[dist]" -j2 # Run the unit tests for software emulation'
+.build:
+  stage: build
+  variables:
+      SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -c 8 -t 00:30:00"
+  script:
+      - 'make ${BUILD_TARGET} -j8 TARGET=sw_emu'
+  needs:
+    - job: format
+      artifacts: false
+
+.test:
+  stage: test
+  script:
+    - mpirun -np 32 ./build/metalwalls ./experiments/supercap/input_f90.dat
+  variables:
+    SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -n 32 -t 01:00:00"
+    XCL_EMULATION_MODE: "sw_emu"
+  needs:
+    - build:host
+    - build:k0_acc
+    - build:sr_acc
+    - build:lr_acc
 
 .synthesis:
     stage: synthesis
@@ -37,120 +53,123 @@ default:
     variables:
         SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -q fpgasynthesis -c 16 -t 24:00:00 --mem 64G"
     script:
-        - "make ${MW_ACCELERATOR} TARGET=${MW_TARGET}"
-        - "archive_summary -ksx build/${MW_ACCELERATOR}_${MW_TARGET}.xclbin.link_summary"
+        - "make ${BUILD_TARGET} TARGET=${TARGET}"
+        - "archive_summary -ksx build/${BUILD_TARGET}_${TARGET}.xclbin.link_summary"
     artifacts:
         paths:
             - build/*.xclbin
             - build/*.link_summary.archive
         when: always
 
-.acc_test:
-    stage: execution
-    only:
-        - web
-    variables:
-        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p fpga --constraint=xilinx_u280_xrt2.15 -t 00:30:00"
-    script:
-        - make run_test -j8 TARGET=${MW_TARGET} TEST_PARAMS="-r XML -o ${MW_ACCELERATOR}_test.xml [${MW_ACCELERATOR}]"
-    artifacts:
-        paths:
-            - "*.xml"
-        when: always
-
 # =========
 # Prechecks
 # =========
 
-general precheck:
-    stage: precheck
+format:
+    stage: format
     variables:
-        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -c 16 -t 01:00:00"
+        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -c 16 -t 00:30:00"
     script:
         - './scripts/format_code.sh # Run the formatting script'
         - 'test -z "$(git ls-files -m)" # Check that the formatting script did not change the code.'
-        - 'make run_test TARGET=sw_emu TEST_PARAMS="~[k0_acc]~[sr_acc]~[lr_acc]" -j16 # Run the unit tests for software emulation'
 
 # ==============
-# K0 Accelerator
+# Build software
 # ==============
 
-precheck k0_acc:
-    extends: .accelerator_precheck
-    variables:
-        MW_ACCELERATOR: k0_acc
+build:host:
+  extends: .build
+  variables:
+    BUILD_TARGET: host
+  artifacts:
+    paths:
+      - build/metalwalls
 
-synthesize k0_acc:
-    extends: .synthesis
-    variables:
-        MW_ACCELERATOR: k0_acc
+build:k0_acc:
+  extends: .build
+  variables:
+      BUILD_TARGET: k0_acc
+  artifacts:
+    paths:
+      - build/*.xclbin
 
-test k0_acc:
-    extends: .acc_test
-    needs:
-        - "synthesize k0_acc"
-    variables:
-        MW_ACCELERATOR: k0_acc
+build:sr_acc:
+  extends: .build
+  variables:
+      BUILD_TARGET: sr_acc
+  artifacts:
+    paths:
+      - build/*.xclbin
 
-# ==============
-# SR Accelerator
-# ==============
+build:lr_acc:
+  extends: .build
+  variables:
+      BUILD_TARGET: lr_acc
+  artifacts:
+    paths:
+      - build/*.xclbin
 
-precheck sr_acc:
-    extends: .accelerator_precheck
-    variables:
-        MW_ACCELERATOR: sr_acc
+# ============
+# Run software
+# ============
 
-synthesize sr_acc:
-    extends: .synthesis
-    variables:
-        MW_ACCELERATOR: sr_acc
+test:supercap:
+  extends: .test
+  variables:
+    EXPERIMENT: supercap
 
-test sr_acc:
-    extends: .acc_test
-    needs:
-        - "synthesize sr_acc"
-    variables:
-        MW_ACCELERATOR: sr_acc
+test:graphene:
+  extends: .test
+  variables:
+    EXPERIMENT: graphene
 
-# ==============
-# LR Accelerator
-# ==============
+# =========
+# Synthesis
+# =========
 
-precheck lr_acc:
-    extends: .accelerator_precheck
-    variables:
-        MW_ACCELERATOR: lr_acc
-        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p normal -c 2 --mem 64G -t 04:30:00"
+synth:k0_acc:
+  extends: .synthesis
+  variables:
+      BUILD_TARGET: k0_acc
+  needs:
+    - test:supercap
+    - test:graphene
 
-synthesize lr_acc:
-    extends: .synthesis
-    variables:
-        MW_ACCELERATOR: lr_acc
+synth:sr_acc:
+  extends: .synthesis
+  variables:
+    BUILD_TARGET: sr_acc
+  needs:
+    - test:supercap
+    - test:graphene
 
-test lr_acc:
-    extends: .acc_test
-    needs:
-        - "synthesize lr_acc"
-    variables:
-        MW_ACCELERATOR: lr_acc
+synth:lr_acc:
+  extends: .synthesis
+  variables:
+    BUILD_TARGET: lr_acc
+  needs:
+    - test:supercap
+    - test:graphene
 
-# =======
-# Miniapp
-# =======
+# ============
+# Run hardware
+# ============
 
-miniapp:
-    stage: execution
-    variables:
-        SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p fpga --constraint xilinx_u280_xrt2.15 -n 15 -N 5 -t 00:15:00 -x n2fpga02"
-    needs:
-        - "synthesize k0_acc"
-        - "synthesize lr_acc"
-        - "synthesize sr_acc"
-    script:
-        - "./scripts/run_miniapp.sh"
-    artifacts:
-        paths:
-            - "metrics_*.json"
-            - "charges_*.out"
-        when: always
+run:
+  stage: run
+  variables:
+    SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p fpga --constraint xilinx_u280_xrt2.16 -n 15 -N 5 -t 00:15:00"
+  needs:
+    - build:host
+    - synth:k0_acc
+    - synth:sr_acc
+    - synth:lr_acc
+  script:
+    - "./scripts/run_miniapp.sh"
+  artifacts:
+    paths:
+      - "metrics_*.json"
+      - "charges_*.out"
+      - "./build/*.xclbin"
+      - "./build/metalwalls"
+    when: always

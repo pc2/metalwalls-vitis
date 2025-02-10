@@ -1,12 +1,12 @@
 #!/bin/bash
 
 #SBATCH -t 00:30:00
-#SBATCH -n 39
-#SBATCH -N 13
+#SBATCH -n 15
+#SBATCH -N 5
 #SBATCH -J "metalwalls"
 #SBATCH -p fpga
 #SBATCH -A hpc-lco-kenter
-#SBATCH --constraint xilinx_u280_xrt2.15
+#SBATCH --constraint xilinx_u280_xrt2.16
 
 ## Load environment modules
 source env.sh

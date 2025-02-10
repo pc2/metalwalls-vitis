@@ -1,16 +1,15 @@
 #!/bin/bash
 
 #SBATCH -t 00:30:00
-#SBATCH -n 39
-#SBATCH -N 13
+#SBATCH -n 15
+#SBATCH -N 5
 #SBATCH -J "metalwalls"
 #SBATCH -p fpga
 #SBATCH -A hpc-lco-kenter
-#SBATCH --constraint xilinx_u280_xrt2.15
+#SBATCH --constraint xilinx_u280_xrt2.16
 
 ## Load environment modules
 source env.sh
-make build/metalwalls -j128
 
 EXPERIMENTS="supercap graphene"
 
@@ -37,7 +36,7 @@ function run_metalwalls {
     ./scripts/add_benchmark_run.py scaling_$1.json $2
 }
 
-for n_ranks in `seq 37 39`
+for n_ranks in `seq 13 15`
 do
     for e in $EXPERIMENTS
     do
