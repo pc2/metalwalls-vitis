@@ -8,7 +8,7 @@ const int SHIFT_REG_SIZE = 8 + 1;
 
 const int max_iterations_max = 500;
 
-void vdot(const int size, const double *a, const double *b, double &out)
+void vdot(const int size, const double *a, const double *b, double *out)
 {
 
     double shift_reg[SHIFT_REG_SIZE];
@@ -50,7 +50,7 @@ final_sum:
     }
 
 writeC:
-    out = sum;
+    *out = sum;
 }
 
 void daxpy(double *out, const int size, const double *y, const double a, const double *x)
@@ -143,12 +143,12 @@ extern "C"
                 }
             }
 
-            vdot(num_atoms, res_out_loc, res_out_loc, rsnew_loc);
+            vdot(num_atoms, res_out_loc, res_out_loc, &rsnew_loc);
         }
         else
         {
             double pAp;
-            vdot(num_atoms, q_in_loc, Ap_loc, pAp);
+            vdot(num_atoms, q_in_loc, Ap_loc, &pAp);
 
             double alpha_cg = rsold_loc / pAp;
 
@@ -156,7 +156,7 @@ extern "C"
 
             daxpy(res_out_loc, num_atoms, res_in_loc, -alpha_cg, Ap_loc);
 
-            vdot(num_atoms, res_out_loc, res_out_loc, rsnew_loc);
+            vdot(num_atoms, res_out_loc, res_out_loc, &rsnew_loc);
 
             /// Setup for next iteration
             double beta = rsnew_loc / rsold_loc;

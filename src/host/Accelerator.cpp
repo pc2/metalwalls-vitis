@@ -64,6 +64,9 @@ inline std::string get_binary_file_path(AcceleratorDesign design)
     case AcceleratorDesign::SR_ACC:
         path_stream << "sr_acc_";
         break;
+    case AcceleratorDesign::CG_ACC:
+        path_stream << "cg_acc_";
+        break;
     default:
         std::cerr << "Illegal design identifier!" << std::endl;
         exit(1);
@@ -167,6 +170,18 @@ Accelerator::Accelerator(Experiment experiment, AcceleratorDesign design, int un
         {
             event.wait();
         }
+    }
+    else if (design == AcceleratorDesign::CG_ACC)
+    {
+        if (!cg_cu.has_value())
+        {
+            cg_cu = ComputeUnit("kernel_cg", program, queue, context);
+        }
+
+        cg_cu->set_scalar(0, experiment.num);
+        cg_cu->set_scalar(2, experiment.selfPotFactor);
+
+        cg_cu->write_buffer(4, experiment.b_cg.data(), experiment.num).wait();
     }
     else
     {
@@ -277,6 +292,43 @@ kernel_run_times_t Accelerator::lr(int mode_start, int mode_end, double *q, doub
     cl_int err;
     OCL_CHECK(err, err = read_event.wait());
 
+    assert(execute_events.size() == 1);
+    return execution_time_ms(execute_events[0]);
+}
+
+kernel_run_times_t Accelerator::cg(const int iter, const double rsold, const double *b_cg, const double *q_in,
+                                   const double *res_in, const double *x_cg_in, double *q_out, double *res_out,
+                                   double *rsnew, double *x_cg_out, double *Ap)
+{
+    std::vector<cl::Event> write_events;
+    std::vector<cl::Event> execute_events;
+    std::vector<cl::Event> read_events;
+
+    cg_cu->set_scalar(1, iter);
+    cg_cu->set_scalar(3, rsold);
+
+    write_events.push_back(cg_cu->write_buffer(5, q_in, experiment.num));
+    write_events.push_back(cg_cu->write_buffer(6, res_in, experiment.num));
+    write_events.push_back(cg_cu->write_buffer(7, x_cg_in, experiment.num));
+    write_events.push_back(cg_cu->write_buffer(8, x_cg_out, experiment.num));
+
+    write_events.push_back(cg_cu->write_buffer(9, q_out, experiment.num));
+    write_events.push_back(cg_cu->write_buffer(10, res_out, experiment.num));
+    write_events.push_back(cg_cu->write_buffer(11, rsnew, 1));
+    write_events.push_back(cg_cu->write_buffer(12, Ap, experiment.num));
+
+    execute_events.push_back(cg_cu->run(write_events));
+
+    read_events.push_back(cg_cu->read_buffer(8, x_cg_out, experiment.num, execute_events));
+    read_events.push_back(cg_cu->read_buffer(9, q_out, experiment.num, execute_events));
+    read_events.push_back(cg_cu->read_buffer(10, res_out, experiment.num, execute_events));
+    read_events.push_back(cg_cu->read_buffer(11, rsnew, 1, execute_events));
+
+    cl_int err;
+    for (auto &read_event : read_events)
+    {
+        OCL_CHECK(err, err = read_event.wait());
+    }
     assert(execute_events.size() == 1);
     return execution_time_ms(execute_events[0]);
 }

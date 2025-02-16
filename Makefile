@@ -125,7 +125,7 @@ endif
 .PHONY: run_app
 run_app: $(HOST_EXE)
 ifeq ($(TARGET),$(filter $(TARGET),sw_emu hw_emu))
-	MW_BINARY_DIR=./build/ XCL_EMULATION_MODE=$(TARGET) mpiexec -n 4 ./$(HOST_EXE) $(INPUT)
+	MW_BINARY_DIR=./build/ XCL_EMULATION_MODE=$(TARGET) mpiexec -n 32 ./$(HOST_EXE) $(INPUT)
 else
 	MW_BINARY_DIR=./build/ mpiexec -n 4 ./$(HOST_EXE) $(INPUT)
 endif

@@ -40,6 +40,7 @@ enum class AcceleratorDesign
     K0_ACC,
     LR_ACC,
     SR_ACC,
+    CG_ACC,
 };
 
 /**
@@ -172,6 +173,9 @@ class Accelerator
      */
     kernel_run_times_t lr(int mode_start, int mode_end, double *q, double *lr);
 
+    kernel_run_times_t cg(const int iter, const double rsold, const double *b_cg, const double *q_in,
+                          const double *res_in, const double *x_cg_in, double *q_out, double *res_out, double *rsnew,
+                          double *x_cg_out, double *Ap);
     /**
      * @brief Return the wrapped command queue.
      * @return The wrapped command queue.
@@ -204,6 +208,7 @@ class Accelerator
     std::optional<ComputeUnit> k0_cu;
     std::optional<ComputeUnit> sr_cu;
     std::optional<ComputeUnit> lr_cu;
+    std::optional<ComputeUnit> cg_cu;
     cl::CommandQueue queue;
     cl::Context context;
     cl::Program program;

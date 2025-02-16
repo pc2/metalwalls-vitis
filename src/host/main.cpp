@@ -146,7 +146,11 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    bool emulation = std::getenv("XCL_EMULATION_MODE") != nullptr;
+
     bool visualise = (argc == 4);
+
+    bool host_cg = std::getenv("HOST_CG") != nullptr;
 
     path_to_inputfile = argv[1];
     if (visualise)
@@ -167,13 +171,14 @@ int main(int argc, char **argv)
     int num_k0_units, num_sr_units, num_lr_units;
     double time_k0, time_sr, time_lr;
     double t_max = std::numeric_limits<double>::infinity();
-    for (int i = 1; i <= mpi_size - 2; i++)
+    int acc_size = mpi_size - (host_cg ? 0 : 1);
+    for (int i = 1; i <= acc_size - 2; i++)
     {
         time_k0 = calc_k0_time(i, experiment.num);
-        for (int j = 1; j <= mpi_size - i - 1; j++)
+        for (int j = 1; j <= acc_size - i - 1; j++)
         {
             time_sr = calc_sr_time(j, experiment.num);
-            int k = mpi_size - i - j;
+            int k = acc_size - i - j;
             time_lr = calc_lr_time(k, experiment.num, experiment.numKModes);
             if (t_max > fmax(time_k0, fmax(time_sr, time_lr)))
             {
@@ -187,6 +192,9 @@ int main(int argc, char **argv)
             };
         }
     }
+
+    assert(acc_size == num_k0_units + num_sr_units + num_lr_units);
+
     metrics["setup"] = {{"loadout", {{"k0", num_k0_units}, {"sr", num_sr_units}, {"lr", num_lr_units}}},
                         {"predicted_iter_time",
                          {{"k0", calc_k0_time(num_k0_units, experiment.num)},
@@ -194,8 +202,6 @@ int main(int argc, char **argv)
                           {"lr", calc_lr_time(num_lr_units, experiment.num, experiment.numKModes)}}}};
     metrics["iteration"] = json::array();
     write_metrics(metrics);
-
-    assert(mpi_size == num_k0_units + num_sr_units + num_lr_units);
 
     Visualisation visualisation;
     if ((mpi_rank == 0) && visualise)
@@ -217,18 +223,20 @@ int main(int argc, char **argv)
     {
         design = AcceleratorDesign::SR_ACC;
     }
-    else
+    else if (mpi_rank < num_k0_units + num_sr_units + num_lr_units)
     {
         design = AcceleratorDesign::LR_ACC;
     }
-
-    bool emulation = std::getenv("XCL_EMULATION_MODE") != nullptr;
+    else
+    {
+        design = AcceleratorDesign::CG_ACC;
+    }
 
     Accelerator acc = Accelerator(experiment, design, emulation ? 0 : node_rank);
 
     int iter;
-    double res_norm = 1.0;
-    double rsold;
+    double residual = 1.0;
+    double residual_norm = 1.0;
     std::vector<double, aligned_allocator<double>> p(experiment.num_pad);
     std::vector<double, aligned_allocator<double>> x_cg(experiment.num_pad);
     std::vector<double, aligned_allocator<double>> b_cg(experiment.num_pad);
@@ -284,6 +292,7 @@ int main(int argc, char **argv)
         acc.lr(boundaries[0], boundaries[1], p.data(), Ap.data());
     }
 
+    /*
     if (mpi_rank == 0)
     {
         for (int32_t i = 0; i < experiment.num; ++i)
@@ -291,10 +300,22 @@ int main(int argc, char **argv)
             Ap[i] -= experiment.selfPotFactor * p[i];
         }
     }
+    */
 
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, Ap.data(), experiment.num, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
+    if (mpi_rank == (mpi_size - 1))
+    {
+        acc.cg(0, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(), res.data(), &residual,
+               x_cg.data(), Ap.data());
+    }
+    MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);    // needed by k0/sr/lr/cg
+    MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
+    MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
+    MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
+                                                                                      //
+    /*
     // Setup initial residual
     for (int i = 0; i < experiment.num; i++)
     {
@@ -307,8 +328,9 @@ int main(int argc, char **argv)
         p[i] = res[i];
     }
 
-    rsold = dot_product(res.data(), res.data(), experiment.num);
+    residual = dot_product(res.data(), res.data(), experiment.num);
 
+    */
     if (mpi_rank == 0)
     {
         auto iteration_end_instant = std::chrono::high_resolution_clock::now();
@@ -326,8 +348,8 @@ int main(int argc, char **argv)
     {
         if (mpi_rank == 0)
         {
-            printf("we are starting iteration number %d with rsold = %+4.15e, residue =  %+4.15e \n", iter, rsold,
-                   res_norm);
+            printf("we are starting iteration number %d with residual = %+4.15e, residual_norm =  %+4.15e \n", iter,
+                   residual, residual_norm);
         }
 
         auto start_iteration_instant = std::chrono::high_resolution_clock::now();
@@ -352,6 +374,7 @@ int main(int argc, char **argv)
 
         auto end_accelerator_instant = std::chrono::high_resolution_clock::now();
 
+        /*
         if (mpi_rank == 0)
         {
             for (int32_t i = 0; i < experiment.num; ++i)
@@ -359,9 +382,27 @@ int main(int argc, char **argv)
                 Ap[i] -= experiment.selfPotFactor * p[i];
             }
         }
+        */
 
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, Ap.data(), experiment.num, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+        if (mpi_rank == (mpi_size - 1))
+        {
+            kernel_run_time = acc.cg(iter, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(),
+                                     res.data(), &residual, x_cg.data(), Ap.data());
+        }
+        MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);    // needed by k0/sr/lr/cg
+        MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
+        MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
+        MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
+
+        residual_norm = sqrt(residual);
+        if (residual_norm < experiment.res_tol)
+        {
+            break;
+        }
+        /*
 
         const double pAp = dot_product(p.data(), Ap.data(), experiment.num);
         double alpha_cg = rsold / pAp;
@@ -393,6 +434,7 @@ int main(int argc, char **argv)
             p[i] = res[i] + beta * p[i];
         }
         rsold = rsnew;
+        */
 
         auto end_iteration_instant = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> iteration_duration = end_iteration_instant - start_iteration_instant;
@@ -409,7 +451,7 @@ int main(int argc, char **argv)
                                         {"run_starts", accelerator_run_starts},
                                         {"run_ends", accelerator_run_ends},
                                         {"total_duration", iteration_duration.count()},
-                                        {"residue", res_norm}});
+                                        {"residual_norm", residual_norm}});
         write_metrics(metrics);
     }
 
@@ -440,7 +482,7 @@ int main(int argc, char **argv)
         std::cout << "Overall Time for CG:            " << duration.count() * 1000.0 << " ms";
         std::cout << "number of iterations: " << iter << std::endl;
 
-        metrics["final"] = {{"n_iterations", iter}, {"runtime", duration.count()}, {"residue", res_norm}};
+        metrics["final"] = {{"n_iterations", iter}, {"runtime", duration.count()}, {"residual_norm", residual_norm}};
         write_metrics(metrics);
     }
 
