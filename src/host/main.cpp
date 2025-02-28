@@ -89,16 +89,49 @@ double calc_lr_time(double num_splits, double num, double modes)
     return (n_read_cycles + n_compute_cycles + n_write_cycles) / freq;
 }
 
-void write_metrics(json metrics)
+class Metrics
 {
-    int mpi_rank = 0;
-    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
-    if (mpi_rank == 0)
+  public:
+    Metrics(Experiment &experiment) : experiment(experiment)
+    {
+    }
+
+    void write()
     {
         std::ofstream metrics_file("metrics.json");
         metrics_file << metrics << std::endl;
     }
-}
+
+    void setup(int num_k0_units, int num_sr_units, int num_lr_units)
+    {
+        metrics["setup"] = {{"loadout", {{"k0", num_k0_units}, {"sr", num_sr_units}, {"lr", num_lr_units}}},
+                            {"predicted_iter_time",
+                             {{"k0", calc_k0_time(num_k0_units, experiment.num)},
+                              {"sr", calc_sr_time(num_sr_units, experiment.num)},
+                              {"lr", calc_lr_time(num_lr_units, experiment.num, experiment.numKModes)}}}};
+        metrics["iteration"] = json::array();
+    }
+
+    void add_iteration(std::vector<double, aligned_allocator<double>> &accelerator_durations,
+                       std::vector<double, aligned_allocator<double>> &accelerator_run_starts,
+                       std::vector<double, aligned_allocator<double>> &accelerator_run_ends, double total_duration,
+                       double residual_norm)
+    {
+        metrics["iteration"].push_back({{"rank_durations", accelerator_durations},
+                                        {"run_starts", accelerator_run_starts},
+                                        {"run_ends", accelerator_run_ends},
+                                        {"total_duration", total_duration},
+                                        {"residual_norm", residual_norm}});
+    }
+
+    void finalize(int iter, double runtime, double residual_norm)
+    {
+        metrics["final"] = {{"n_iterations", iter}, {"runtime", runtime}, {"residual_norm", residual_norm}};
+    }
+
+    json metrics;
+    Experiment experiment;
+};
 
 int main(int argc, char **argv)
 {
@@ -168,9 +201,11 @@ int main(int argc, char **argv)
     }
 
     Experiment experiment(path_to_inputfile, vector_size);
-    json metrics;
+    Metrics metrics(experiment);
 
-    int num_k0_units, num_sr_units, num_lr_units;
+    int num_k0_units = 0;
+    int num_sr_units = 0;
+    int num_lr_units = 0;
     double time_k0, time_sr, time_lr;
     double t_max = std::numeric_limits<double>::infinity();
     int acc_size = mpi_size - (host_cg ? 0 : 1);
@@ -197,13 +232,11 @@ int main(int argc, char **argv)
 
     assert(acc_size == num_k0_units + num_sr_units + num_lr_units);
 
-    metrics["setup"] = {{"loadout", {{"k0", num_k0_units}, {"sr", num_sr_units}, {"lr", num_lr_units}}},
-                        {"predicted_iter_time",
-                         {{"k0", calc_k0_time(num_k0_units, experiment.num)},
-                          {"sr", calc_sr_time(num_sr_units, experiment.num)},
-                          {"lr", calc_lr_time(num_lr_units, experiment.num, experiment.numKModes)}}}};
-    metrics["iteration"] = json::array();
-    write_metrics(metrics);
+    metrics.setup(num_k0_units, num_sr_units, num_lr_units);
+    if (mpi_rank == 0)
+    {
+        metrics.write();
+    }
 
     Visualisation visualisation;
     if ((mpi_rank == 0) && visualise)
@@ -272,12 +305,6 @@ int main(int argc, char **argv)
         boundaries = acc.get_boundaries(experiment.numKModes, num_lr_units, 1, lr_part_rank);
     }
 
-    // redundant but will be capsulated, reminder
-    for (int i = 0; i < experiment.num_pad; i++)
-    {
-        Ap[i] = 0; // Initialize the Ap vector.
-    }
-
     // Initial iteration
     auto iteration_start_instant = std::chrono::high_resolution_clock::now();
 
@@ -305,7 +332,8 @@ int main(int argc, char **argv)
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, Ap.data(), experiment.num, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-    if (!host_cg) {
+    if (!host_cg)
+    {
         if (mpi_rank == (mpi_size - 1))
         {
             acc.cg(0, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(), res.data(), &residual,
@@ -315,7 +343,9 @@ int main(int argc, char **argv)
         MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
         MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
         MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
-    } else {
+    }
+    else
+    {
         // Setup initial residual
         for (int i = 0; i < experiment.num; i++)
         {
@@ -354,11 +384,6 @@ int main(int argc, char **argv)
 
         auto start_iteration_instant = std::chrono::high_resolution_clock::now();
 
-        for (int i = 0; i < experiment.num_pad; i++)
-        {
-            Ap[i] = 0; // Initialize the Ap vector.
-        }
-
         if (design == AcceleratorDesign::K0_ACC)
         {
             kernel_run_time = acc.k0(boundaries[0], boundaries[1], p.data(), Ap.data());
@@ -385,16 +410,18 @@ int main(int argc, char **argv)
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, Ap.data(), experiment.num, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-        if (!host_cg) {
+        if (!host_cg)
+        {
             if (mpi_rank == (mpi_size - 1))
             {
                 kernel_run_time = acc.cg(iter, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(),
                                          res.data(), &residual, x_cg.data(), Ap.data());
             }
-            MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);    // needed by k0/sr/lr/cg
-            MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
-            MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
-            MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
+            MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);   // needed by k0/sr/lr/cg
+            MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg
+            MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed to check convergence
+            MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1,
+                      MPI_COMM_WORLD); // needed by cg and as result
 
             residual_norm = sqrt(residual);
             if (residual_norm < experiment.res_tol)
@@ -402,7 +429,7 @@ int main(int argc, char **argv)
                 break;
             }
         }
-        else 
+        else
         {
             const double pAp = dot_product(p.data(), Ap.data(), experiment.num);
             double alpha_cg = residual / pAp;
@@ -447,12 +474,12 @@ int main(int argc, char **argv)
                    MPI_COMM_WORLD);
         MPI_Gather(&kernel_run_time.end, 1, MPI_DOUBLE, accelerator_run_ends.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-        metrics["iteration"].push_back({{"rank_durations", accelerator_durations},
-                                        {"run_starts", accelerator_run_starts},
-                                        {"run_ends", accelerator_run_ends},
-                                        {"total_duration", iteration_duration.count()},
-                                        {"residual_norm", residual_norm}});
-        write_metrics(metrics);
+        metrics.add_iteration(accelerator_durations, accelerator_run_starts, accelerator_run_ends,
+                              iteration_duration.count(), residual_norm);
+        if (mpi_rank == 0)
+        {
+            metrics.write();
+        }
     }
 
     if (mpi_rank == 0)
@@ -482,8 +509,11 @@ int main(int argc, char **argv)
         std::cout << "Overall Time for CG:            " << duration.count() * 1000.0 << " ms";
         std::cout << "number of iterations: " << iter << std::endl;
 
-        metrics["final"] = {{"n_iterations", iter}, {"runtime", duration.count()}, {"residual_norm", residual_norm}};
-        write_metrics(metrics);
+        metrics.finalize(iter, duration.count(), residual_norm);
+        if (mpi_rank == 0)
+        {
+            metrics.write();
+        }
     }
 
     MPI_Finalize();
