@@ -89,6 +89,49 @@ double calc_lr_time(double num_splits, double num, double modes)
     return (n_read_cycles + n_compute_cycles + n_write_cycles) / freq;
 }
 
+double calculate_residual(Experiment &experiment, int iter, double *res, double *b_cg, double *Ap, double *p,
+                          double *x_cg, double residual)
+{
+    if (iter == 0)
+    {
+        for (int i = 0; i < experiment.num; i++)
+        {
+            res[i] = b_cg[i] - Ap[i];
+        }
+
+        // p0 = z0
+        for (int i = 0; i < experiment.num; i++)
+        {
+            p[i] = res[i];
+        }
+
+        return dot_product(res, res, experiment.num);
+    }
+    else
+    {
+        const double pAp = dot_product(p, Ap, experiment.num);
+        double alpha_cg = residual / pAp;
+        for (int i = 0; i < experiment.num; i++)
+        {
+            x_cg[i] = x_cg[i] + alpha_cg * p[i];
+        }
+        for (int i = 0; i < experiment.num; i++)
+        {
+            res[i] = res[i] - alpha_cg * Ap[i];
+        }
+
+        double residual_new = dot_product(res, res, experiment.num);
+
+        /// Setup for next iteration
+        double beta = residual_new / residual;
+        for (int i = 0; i < experiment.num; i++)
+        {
+            p[i] = res[i] + beta * p[i];
+        }
+        return residual_new;
+    }
+}
+
 class Metrics
 {
   public:
@@ -269,7 +312,7 @@ int main(int argc, char **argv)
 
     Accelerator acc = Accelerator(experiment, design, emulation ? 0 : node_rank);
 
-    int iter;
+    int iter = 0;
     double residual = 1.0;
     double residual_norm = 1.0;
     std::vector<double, aligned_allocator<double>> p(experiment.num_pad);
@@ -347,18 +390,8 @@ int main(int argc, char **argv)
     else
     {
         // Setup initial residual
-        for (int i = 0; i < experiment.num; i++)
-        {
-            res[i] = b_cg[i] - Ap[i];
-        }
-
-        // p0 = z0
-        for (int i = 0; i < experiment.num; i++)
-        {
-            p[i] = res[i];
-        }
-
-        residual = dot_product(res.data(), res.data(), experiment.num);
+        residual =
+            calculate_residual(experiment, iter, res.data(), b_cg.data(), Ap.data(), p.data(), nullptr, residual);
     }
 
     if (mpi_rank == 0)
@@ -396,6 +429,13 @@ int main(int argc, char **argv)
         {
             kernel_run_time = acc.lr(boundaries[0], boundaries[1], p.data(), Ap.data());
         }
+        else if (design == AcceleratorDesign::CG_ACC)
+        {
+            for (int32_t i = 0; i < experiment.num; ++i)
+            {
+                Ap[i] = 0.0;
+            }
+        }
 
         auto end_accelerator_instant = std::chrono::high_resolution_clock::now();
 
@@ -431,36 +471,18 @@ int main(int argc, char **argv)
         }
         else
         {
-            const double pAp = dot_product(p.data(), Ap.data(), experiment.num);
-            double alpha_cg = residual / pAp;
-            for (int i = 0; i < experiment.num; i++)
-            {
-                x_cg[i] = x_cg[i] + alpha_cg * p[i];
-            }
+            residual = calculate_residual(experiment, iter, res.data(), b_cg.data(), Ap.data(), p.data(), x_cg.data(),
+                                          residual);
             if ((mpi_rank == 0) && visualise)
             {
                 visualisation.electrodes.set_x_cg(iter, x_cg.data());
             }
 
-            for (int i = 0; i < experiment.num; i++)
-            {
-                res[i] = res[i] - alpha_cg * Ap[i];
-            }
-
-            double residual_new = dot_product(res.data(), res.data(), experiment.num);
-            residual_norm = sqrt(residual_new);
+            residual_norm = sqrt(residual);
             if (residual_norm < experiment.res_tol)
             {
                 break;
             }
-
-            /// Setup for next iteration
-            double beta = residual_new / residual;
-            for (int i = 0; i < experiment.num; i++)
-            {
-                p[i] = res[i] + beta * p[i];
-            }
-            residual = residual_new;
         }
 
         auto end_iteration_instant = std::chrono::high_resolution_clock::now();
