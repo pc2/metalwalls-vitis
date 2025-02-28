@@ -336,7 +336,6 @@ int main(int argc, char **argv)
         int k0_part_rank = mpi_rank;
         boundaries = acc.get_boundaries(experiment.num, num_k0_units, 1, k0_part_rank);
     }
-
     else if (design == AcceleratorDesign::SR_ACC)
     {
         int sr_part_rank = mpi_rank - num_k0_units;
@@ -348,66 +347,13 @@ int main(int argc, char **argv)
         boundaries = acc.get_boundaries(experiment.numKModes, num_lr_units, 1, lr_part_rank);
     }
 
-    // Initial iteration
-    auto iteration_start_instant = std::chrono::high_resolution_clock::now();
-
-    if (design == AcceleratorDesign::K0_ACC)
-    {
-        acc.k0(boundaries[0], boundaries[1], p.data(), Ap.data());
-    }
-    else if (design == AcceleratorDesign::SR_ACC)
-    {
-        acc.sr(boundaries[0], boundaries[1], p.data(), Ap.data());
-    }
-    else if (design == AcceleratorDesign::LR_ACC)
-    {
-        acc.lr(boundaries[0], boundaries[1], p.data(), Ap.data());
-    }
-
-    if (host_cg && mpi_rank == 0)
-    {
-        for (int32_t i = 0; i < experiment.num; ++i)
-        {
-            Ap[i] -= experiment.selfPotFactor * p[i];
-        }
-    }
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    MPI_Allreduce(MPI_IN_PLACE, Ap.data(), experiment.num, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-
-    if (!host_cg)
-    {
-        if (mpi_rank == (mpi_size - 1))
-        {
-            acc.cg(0, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(), res.data(), &residual,
-                   x_cg.data(), Ap.data());
-        }
-        MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);    // needed by k0/sr/lr/cg
-        MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
-        MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
-        MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
-    }
-    else
-    {
-        // Setup initial residual
-        residual =
-            calculate_residual(experiment, iter, res.data(), b_cg.data(), Ap.data(), p.data(), nullptr, residual);
-    }
-
-    if (mpi_rank == 0)
-    {
-        auto iteration_end_instant = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> iteration_duration = iteration_end_instant - iteration_start_instant;
-        std::cout << "Initial Iteration: " << iteration_duration.count() * 1000.0 << " ms" << std::endl;
-    }
-
     kernel_run_times_t kernel_run_time;
 
     auto start_instant = std::chrono::high_resolution_clock::now();
 
     /************************************** Start Conjugate Gradient (CG) ****************************/
 
-    for (iter = 1; iter < experiment.max_iterations; ++iter)
+    for (iter = 0; iter < experiment.max_iterations; ++iter)
     {
         if (mpi_rank == 0)
         {
@@ -462,6 +408,11 @@ int main(int argc, char **argv)
             MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed to check convergence
             MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1,
                       MPI_COMM_WORLD); // needed by cg and as result
+
+            if ((mpi_rank == 0) && visualise)
+            {
+                visualisation.electrodes.set_x_cg(iter, x_cg.data());
+            }
 
             residual_norm = sqrt(residual);
             if (residual_norm < experiment.res_tol)
