@@ -6,5 +6,17 @@ module load xilinx/xrt/2.16 gompi/2023b VTK/9.3.0-foss-2023b
 # Set environment variables
 export XRT_INI_PATH=./xrt.ini
 
-#increase stack size
+# increase stack size
 ulimit -s 8182
+
+# activate venv
+if [[ ! -d .venv ]]; then
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install --upgrade pip
+    pip install -r requirements.txt
+else
+    source .venv/bin/activate
+fi
+
+
