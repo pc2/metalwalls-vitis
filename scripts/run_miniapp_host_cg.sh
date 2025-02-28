@@ -29,7 +29,7 @@ cd ../ && rmdir tmp
 
 function run_metalwalls {
     export MW_BINARY_DIR=./build/
-    #export HOST_CG=1
+    export HOST_CG=1
 
     srun -l -n $2 ./build/metalwalls ./experiments/$1/input_f90.dat || exit 1
     cp charges.out charges_$1.out

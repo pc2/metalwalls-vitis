@@ -151,11 +151,19 @@ synth:lr_acc:
     - test:supercap
     - test:graphene
 
+synth:cg_acc:
+  extends: .synthesis
+  variables:
+    BUILD_TARGET: cg_acc
+  needs:
+    - test:supercap
+    - test:graphene
+
 # ============
 # Run hardware
 # ============
 
-run:
+run:host_cg:
   stage: run
   variables:
     SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p fpga --constraint xilinx_u280_xrt2.16 -n 15 -N 5 -t 00:15:00"
@@ -165,7 +173,27 @@ run:
     - synth:sr_acc
     - synth:lr_acc
   script:
-    - "./scripts/run_miniapp.sh"
+    - "./scripts/run_miniapp_host_cg.sh"
+  artifacts:
+    paths:
+      - "metrics_*.json"
+      - "charges_*.out"
+      - "./build/*.xclbin"
+      - "./build/metalwalls"
+    when: always
+
+run:acc_cg:
+  stage: run
+  variables:
+    SCHEDULER_PARAMETERS: "-A ${ACCOUNT} -p fpga --constraint xilinx_u280_xrt2.16 -n 15 -N 5 -t 00:15:00"
+  needs:
+    - build:host
+    - synth:k0_acc
+    - synth:sr_acc
+    - synth:lr_acc
+    - synth:cg_acc
+  script:
+    - "./scripts/run_miniapp_acc_cg.sh"
   artifacts:
     paths:
       - "metrics_*.json"
