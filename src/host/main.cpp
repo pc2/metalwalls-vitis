@@ -148,9 +148,9 @@ int main(int argc, char **argv)
 
     bool emulation = std::getenv("XCL_EMULATION_MODE") != nullptr;
 
-    bool visualise = (argc == 4);
-
     bool host_cg = std::getenv("HOST_CG") != nullptr;
+
+    bool visualise = (argc == 4) && host_cg;
 
     path_to_inputfile = argv[1];
     if (visualise)
@@ -163,6 +163,8 @@ int main(int argc, char **argv)
     {
         printf("Launched with:\n");
         printf("Inputfile: %s\n", path_to_inputfile.c_str());
+        printf("Visualisation %s\n", visualise ? "enabled" : "disabled");
+        printf("CG Step on %s\n", host_cg ? "Host" : "Accelerator");
     }
 
     Experiment experiment(path_to_inputfile, vector_size);
@@ -270,7 +272,7 @@ int main(int argc, char **argv)
         boundaries = acc.get_boundaries(experiment.numKModes, num_lr_units, 1, lr_part_rank);
     }
 
-    // reddundant but will be capsulated, reminder
+    // redundant but will be capsulated, reminder
     for (int i = 0; i < experiment.num_pad; i++)
     {
         Ap[i] = 0; // Initialize the Ap vector.
@@ -292,45 +294,43 @@ int main(int argc, char **argv)
         acc.lr(boundaries[0], boundaries[1], p.data(), Ap.data());
     }
 
-    /*
-    if (mpi_rank == 0)
+    if (host_cg && mpi_rank == 0)
     {
         for (int32_t i = 0; i < experiment.num; ++i)
         {
             Ap[i] -= experiment.selfPotFactor * p[i];
         }
     }
-    */
 
     MPI_Barrier(MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, Ap.data(), experiment.num, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-    if (mpi_rank == (mpi_size - 1))
-    {
-        acc.cg(0, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(), res.data(), &residual,
-               x_cg.data(), Ap.data());
-    }
-    MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);    // needed by k0/sr/lr/cg
-    MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
-    MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
-    MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
-                                                                                      //
-    /*
-    // Setup initial residual
-    for (int i = 0; i < experiment.num; i++)
-    {
-        res[i] = b_cg[i] - Ap[i];
+    if (!host_cg) {
+        if (mpi_rank == (mpi_size - 1))
+        {
+            acc.cg(0, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(), res.data(), &residual,
+                   x_cg.data(), Ap.data());
+        }
+        MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);    // needed by k0/sr/lr/cg
+        MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
+        MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
+        MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
+    } else {
+        // Setup initial residual
+        for (int i = 0; i < experiment.num; i++)
+        {
+            res[i] = b_cg[i] - Ap[i];
+        }
+
+        // p0 = z0
+        for (int i = 0; i < experiment.num; i++)
+        {
+            p[i] = res[i];
+        }
+
+        residual = dot_product(res.data(), res.data(), experiment.num);
     }
 
-    // p0 = z0
-    for (int i = 0; i < experiment.num; i++)
-    {
-        p[i] = res[i];
-    }
-
-    residual = dot_product(res.data(), res.data(), experiment.num);
-
-    */
     if (mpi_rank == 0)
     {
         auto iteration_end_instant = std::chrono::high_resolution_clock::now();
@@ -374,67 +374,67 @@ int main(int argc, char **argv)
 
         auto end_accelerator_instant = std::chrono::high_resolution_clock::now();
 
-        /*
-        if (mpi_rank == 0)
+        if (host_cg && mpi_rank == 0)
         {
             for (int32_t i = 0; i < experiment.num; ++i)
             {
                 Ap[i] -= experiment.selfPotFactor * p[i];
             }
         }
-        */
 
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, Ap.data(), experiment.num, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-        if (mpi_rank == (mpi_size - 1))
-        {
-            kernel_run_time = acc.cg(iter, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(),
-                                     res.data(), &residual, x_cg.data(), Ap.data());
-        }
-        MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);    // needed by k0/sr/lr/cg
-        MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
-        MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
-        MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
+        if (!host_cg) {
+            if (mpi_rank == (mpi_size - 1))
+            {
+                kernel_run_time = acc.cg(iter, residual, b_cg.data(), p.data(), res.data(), x_cg.data(), p.data(),
+                                         res.data(), &residual, x_cg.data(), Ap.data());
+            }
+            MPI_Bcast(p.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);    // needed by k0/sr/lr/cg
+            MPI_Bcast(res.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);  // needed by cg
+            MPI_Bcast(&residual, 1, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD);                // needed to check convergence
+            MPI_Bcast(x_cg.data(), experiment.num, MPI_DOUBLE, mpi_size - 1, MPI_COMM_WORLD); // needed by cg and as result
 
-        residual_norm = sqrt(residual);
-        if (residual_norm < experiment.res_tol)
-        {
-            break;
+            residual_norm = sqrt(residual);
+            if (residual_norm < experiment.res_tol)
+            {
+                break;
+            }
         }
-        /*
+        else 
+        {
+            const double pAp = dot_product(p.data(), Ap.data(), experiment.num);
+            double alpha_cg = residual / pAp;
+            for (int i = 0; i < experiment.num; i++)
+            {
+                x_cg[i] = x_cg[i] + alpha_cg * p[i];
+            }
+            if ((mpi_rank == 0) && visualise)
+            {
+                visualisation.electrodes.set_x_cg(iter, x_cg.data());
+            }
 
-        const double pAp = dot_product(p.data(), Ap.data(), experiment.num);
-        double alpha_cg = rsold / pAp;
-        for (int i = 0; i < experiment.num; i++)
-        {
-            x_cg[i] = x_cg[i] + alpha_cg * p[i];
-        }
-        if ((mpi_rank == 0) && visualise)
-        {
-            visualisation.electrodes.set_x_cg(iter, x_cg.data());
-        }
+            for (int i = 0; i < experiment.num; i++)
+            {
+                res[i] = res[i] - alpha_cg * Ap[i];
+            }
 
-        for (int i = 0; i < experiment.num; i++)
-        {
-            res[i] = res[i] - alpha_cg * Ap[i];
-        }
+            double residual_new = dot_product(res.data(), res.data(), experiment.num);
+            residual_norm = sqrt(residual_new);
+            if (residual_norm < experiment.res_tol)
+            {
+                break;
+            }
 
-        double rsnew = dot_product(res.data(), res.data(), experiment.num);
-        res_norm = sqrt(rsnew);
-        if (res_norm < experiment.res_tol)
-        {
-            break;
+            /// Setup for next iteration
+            double beta = residual_new / residual;
+            for (int i = 0; i < experiment.num; i++)
+            {
+                p[i] = res[i] + beta * p[i];
+            }
+            residual = residual_new;
         }
-
-        /// Setup for next iteration
-        double beta = rsnew / rsold;
-        for (int i = 0; i < experiment.num; i++)
-        {
-            p[i] = res[i] + beta * p[i];
-        }
-        rsold = rsnew;
-        */
 
         auto end_iteration_instant = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> iteration_duration = end_iteration_instant - start_iteration_instant;
